@@ -20,7 +20,10 @@
   "bugs": {
     "url": "https://github.com/folktale/parsing.combinators/issues"
   },
-  "dependencies": {},
+  "dependencies": {
+    "monads.either": "~0.1.0",
+    "monads.maybe": "~0.2.1"
+  },
   "devDependencies": {
     "browserify": "git://github.com/killdream/node-browserify",
     "groc": "git://github.com/killdream/groc#patch-livescript",
