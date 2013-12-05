@@ -27,7 +27,8 @@
 
 Maybe = require 'monads.maybe'
 Either = require 'monads.either'
-
+fold-right = require 'data.array/folds/fold-right'
+rest = require 'data.array/common/rest'
 
 export class State
   (input, index, additional) ->
@@ -82,7 +83,7 @@ export class Position
 
   to-string: ->
     line  = @line!
-    col   = @column!
+    col   = @column! + 1
     lines = @context 3
     end   = Math.min line, 3
 
@@ -90,7 +91,7 @@ export class Position
     --- At line #line, column #col ---
 
     #{lines.slice 0, end .join '\n'}
-    #{' ' * col}^
+    #{' ' * (col - 1)}^
     #{lines.slice end, @input.length .join '\n'}
 
     """
@@ -136,6 +137,12 @@ export class ExpectedException extends ParserException
     | otherwise                       => super b
 
 
+
+class Literal
+  (a) -> @value = a
+  to-string: -> "(#{@a})"
+
+
 repr = (a) -> switch typeof! a
   | \String => "“#{a}”"
   | \Array  => "[#{a.map repr .join ', '}]"
@@ -161,24 +168,115 @@ export unexpect = (what, state) -->
 export result-or-error = (e, v) ->
   v.or-else ([state, _]) -> fail e, state
 
-export char = (a) -> (state) ->
-  state.consume 1 
+
+# Primitive parsers
+
+export satisfy = (description, f) --> (state) ->
+  state.consume 1
+  .or-else ->
+    fail "Expected #{description}, but reached the end of the input.", state
+  .chain (a) ->
+    | f a => Either.Right [state.skip 1; a]
+    | _   => Either.Left [state, new ExpectedException (new Literal description), a, state]
+
+
+export string = (a) -> (state) ->
+  state.consume a.length
   .or-else -> 
-    fail "Expected “#{repr a}”, but reached the end of the input.", state
+    fail "Expected #{repr a}, but reached the end of the input.", state
   .chain (expect state, a)
 
-export choice = (p1, p2) --> (state) ->
-  p1 state
-  .or-else ([_, e1]) -> do
-                        p2 state
-                        .or-else ([_, e2]) -> new Either.Left [state; e2.aggregate e1]
-  
-export sequence = (p1, p2) --> (s1) ->
-  [s2, a] <- p1 s1 .chain
-  [s3, b] <- p2 s2 .chain
-  return Either.Right [s3, [a, b]]
 
+export one-of = (as) -> (state) ->
+  state.consume 1
+  .or-else ->
+    fail "Expected one of #{repr as}, but reached the end of the input.", state
+  .chain (a) -> 
+    | as.index-of a != -1 => Either.Right [state.skip 1; a]
+    | otherwise           => Either.Left [state, (new ExpectedException null, a, state) <<< { expected: as }]
+
+
+export none-of = (as) -> (state) ->
+  state.consume 1
+  .or-else ->
+    fail "Expected none of #{repr as}, but reached the end of the input.", state
+  .chain (a) ->
+    | as.index-of a == -1 => Either.Right [state.skip 1; a]
+    | otherwise           => Either.Left [state, (new ExpectedException null, a, state) <<< { expected: as }]
+
+
+export any-char = (state) ->
+  state.consume 1
+  .or-else ->
+    fail "Expected any character, but reached the end of the input.", state
+  .chain (a) -> Either.Right [state.skip 1; a]
+
+
+export space     = satisfy 'white space'            -> /\s/.test it
+export digit     = satisfy 'digit'                  -> /\d/.test it
+export hex-digit = satisfy 'hexadecimal digit'      -> /[\dabcdefABCDEF]/.test it
+export oct-digit = satisfy 'octal digit'            -> /[01234567]/.test it
+export letter    = satisfy 'letter'                 -> /\w/.test it
+export lower     = satisfy 'lower-case letter'      -> /[a-z]/.test it
+export upper     = satisfy 'upper-case letter'      -> /[A-Z]/.test it
+export alpha-num = satisfy 'alphanumeric character' -> /[\w\d]/.test it
+export new-line  = satisfy 'newline'                -> /\r|\n/.test it
+  
+
+
+# Combinators
+export choice = (ps) -> (state) ->
+  return fold-right alternate, (ps.0 state), (rest ps)
+
+  function alternate(p, v)
+    v.or-else ([s1, e1]) ->
+      p s1 .or-else ([_, e2]) -> Either.Left [s1, e2.aggregate e1]
+
+  
 export optional = (default_, p1) --> (state) ->
-  p1 state .or-else -> new Either.Right [state, default_]
+  p1 state .or-else -> Either.Right [state, default_]
 
-  
+
+export between = (open, close, p) --> (state) ->
+  [s1, _] <- open state .chain
+  [s2, a] <- p s1 .chain
+  [s3, _] <- close s2 .chain
+  return Either.Right [s3, a]
+
+
+export skip-many = (p) -> (state) ->
+  r = p state
+  while r.is-right => r := r.chain ([s1, _]) -> p s1
+  return r.fold discard, discard
+
+  function discard([s, _]) => Either.Right [s, null]
+
+
+export many = (p) -> (state) ->
+  r    = Either.Right [state, []]
+  done = false
+  while not done  => do
+                     [s1, as] <- r.chain
+                     [s2, a]  <- p s1 .or-else(stop).chain
+                     as.push a
+                     r := Either.Right [s2, as]
+  return r
+
+  function stop(a) => do
+                      done := true
+                      return Either.Left a
+
+
+export many1 = (p) -> (s1) ->
+  [s2, a]  <- p s1 .chain
+  [s3, as] <- many(p)(s2).chain
+  return Either.Right [s3, [a] ++ as]
+
+
+export sequence = (ps) -> (s1) ->
+  return fold-right aggregate, (Either.Right [s1, []]), ps
+
+  function aggregate(p, v)
+    v.chain ([s2, as]) -> p s2 .chain ([s3, a]) -> do
+                                                   as.push a
+                                                   Either.Right [s3, as]

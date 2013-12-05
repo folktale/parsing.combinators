@@ -22,7 +22,8 @@
   },
   "dependencies": {
     "monads.either": "~0.1.0",
-    "monads.maybe": "~0.2.1"
+    "monads.maybe": "~0.2.1",
+    "data.array": "~0.1.0"
   },
   "devDependencies": {
     "browserify": "git://github.com/killdream/node-browserify",
