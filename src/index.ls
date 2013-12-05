@@ -89,19 +89,30 @@ export class Position
     """
     
 
-export fail = (reason, state, origin) ->
-  message = "#reason\n#{state.position!}"
-  a = Error.call this, message
-  a.name   = "Parser Exception"
-  a.reason = reason
-  a.state  = state
-  a.origin = origin
+export class ParserException
+  (reason, state) ->
+    @reason = reason
+    @state  = state
+    @stack  = ''
+    @origin = null
 
-  a.show = ->
-    | origin => "#{a.stack}\nArising from #{origin.show!}"
-    | _      => "#{a.stack}"
+  make-stack: ->
+    ^^this <<< { stack: (new Error).stack.split /\r?\n/ .slice 1 .join '\n' }
+
+  aggregate: (b) ->
+    ^^b <<< { origin: this }
+
+  to-string: ->
+    "ParserException: #{@reason}\n#{@state.position!}\n\n#{@stack}\n#{@show-origin!}"
+
+  show-origin: ->
+    | origin => "Arising from #{@origin.to-string!}"
+    | _      => ''
+
   
-  return a
+
+
+    
     
 
 
