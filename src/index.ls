@@ -140,7 +140,7 @@ export class ExpectedException extends ParserException
 
 class Literal
   (a) -> @value = a
-  to-string: -> "(#{@a})"
+  to-string: -> "(#{@value})"
 
 
 repr = (a) -> switch typeof! a
@@ -225,12 +225,14 @@ export new-line  = satisfy 'newline'                -> /\r|\n/.test it
 
 
 # Combinators
+backtrack = (s) -> (v) -> v.or-else ([_, e]) -> Either.Left [s, e]
+
 export choice = (ps) -> (state) ->
   return fold-right alternate, (ps.0 state), (rest ps)
 
   function alternate(p, v)
     v.or-else ([s1, e1]) ->
-      p s1 .or-else ([_, e2]) -> Either.Left [s1, e2.aggregate e1]
+      p s1 .or-else ([_, e2]) -> Either.Left [s1, e1.aggregate e2]
 
   
 export optional = (default_, p1) --> (state) ->
@@ -238,7 +240,7 @@ export optional = (default_, p1) --> (state) ->
 
 
 export between = (open, close, p) --> (state) ->
-  [s1, _] <- open state .chain
+  [s1, _] <- (backtrack state) open state .chain
   [s2, a] <- p s1 .chain
   [s3, _] <- close s2 .chain
   return Either.Right [s3, a]
@@ -268,15 +270,24 @@ export many = (p) -> (state) ->
 
 
 export many1 = (p) -> (s1) ->
-  [s2, a]  <- p s1 .chain
+  [s2, a]  <- (backtrack s1) p s1 .chain
   [s3, as] <- many(p)(s2).chain
   return Either.Right [s3, [a] ++ as]
 
 
 export sequence = (ps) -> (s1) ->
-  return fold-right aggregate, (Either.Right [s1, []]), ps
+  return (backtrack s1) fold-right aggregate, (Either.Right [s1, []]), ps
 
   function aggregate(p, v)
     v.chain ([s2, as]) -> p s2 .chain ([s3, a]) -> do
                                                    as.push a
                                                    Either.Right [s3, as]
+
+
+export and-then = (p1, p2) --> (s1) ->
+  [s2, _] <- (backtrack s1) p1 s1 .chain
+  [s3, a] <- p2 s2 .chain
+  return Either.Right [s3, a]
+
+export separated-by  = (what, p) --> many (and-then what, p)
+export separated-by1 = (what, p) --> many1 (and-then what, p)
