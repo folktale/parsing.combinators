@@ -90,7 +90,7 @@ export class Position
     --- At line #line, column #col ---
 
     #{lines.slice 0, end .join '\n'}
-    #{' ' * (col - 1)}^
+    #{' ' * col}^
     #{lines.slice end, @input.length .join '\n'}
 
     """
@@ -115,24 +115,24 @@ export class ParserException
   get-reason: -> @reason
     
   show-origin: ->
-    | origin => "Arising from #{@origin.to-string!}"
-    | _      => ''
+    | @origin => "Arising from #{@origin.to-string!}"
+    | _       => ''
 
   
 
 export class ExpectedException extends ParserException
   (expected, found, state) ->
     super '', state
-    @expected = []
+    @expected = [expected]
     @found    = found
     
   get-reason: -> switch @expected.length
     | 1 => "Expected #{repr @expected.0}, found #{repr @found}."
-    | 2 => "Expected either #{@expected.map repr .join \or}, found #{repr @found}."
-    | _ => "Expected one of #{expected.slice 0, -1 .map repr .join \,}, or #{repr @expected.0}, found #{repr @found}."
+    | 2 => "Expected either #{@expected.map repr .join ' or '}, found #{repr @found}."
+    | _ => "Expected #{@expected.slice 0, -1 .map repr .join ', '} or #{repr @expected[*-1]}, found #{repr @found}."
     
   aggregate: (b) ->
-    | b.expected && b.found is @found => ^^b <<< expected: @expected ++ b.expected
+    | b.expected && b.found is @found => ^^b <<< expected: b.expected ++ @expected
     | otherwise                       => super b
 
 
@@ -153,7 +153,7 @@ export expect = (state, a, b) -->
   | _      => Either.Left [state; new ExpectedException a, b, state]
   
 export fail = (reason, state) -->
-  Either.Left [state, new ParserException reason, state]
+  Either.Left [state; new ParserException reason, state]
 
 export unexpect = (what, state) -->
   fail "Unexpected #{repr what}.", state
@@ -164,14 +164,14 @@ export result-or-error = (e, v) ->
 export char = (a) -> (state) ->
   state.consume 1 
   .or-else -> 
-    Either.Left [state; fail "Expected “#{repr a}”, but reached the end of the input.", state]
+    fail "Expected “#{repr a}”, but reached the end of the input.", state
   .chain (expect state, a)
 
 export choice = (p1, p2) --> (state) ->
   p1 state
   .or-else ([_, e1]) -> do
                         p2 state
-                        .or-else ([_, e2]) -> e2.aggregate e1
+                        .or-else ([_, e2]) -> new Either.Left [state; e2.aggregate e1]
   
 export sequence = (p1, p2) --> (s1) ->
   [s2, a] <- p1 s1 .chain
