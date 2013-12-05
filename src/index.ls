@@ -115,6 +115,8 @@ export class ParserException
 
   get-reason: -> @reason
     
+  map: (f) -> ^^this <<< { reason: f @reason, origin: this }
+
   show-origin: ->
     | @origin => "Arising from #{@origin.to-string!}"
     | _       => ''
@@ -137,6 +139,7 @@ export class ExpectedException extends ParserException
     | otherwise                       => super b
 
 
+  map: (f) -> ^^this <<< { expected: [new Literal (f @expected)], origin: this }
 
 class Literal
   (a) -> @value = a
@@ -165,9 +168,11 @@ export fail = (reason, state) -->
 export unexpect = (what, state) -->
   fail "Unexpected #{repr what}.", state
  
-export result-or-error = (e, v) ->
+export result-or-error = (e, v) -->
   v.or-else ([state, _]) -> fail e, state
 
+export map-failure = (f, p) --> (s) ->
+  p s .or-else ([state, e]) -> Either.Left [state, e.map f]
 
 # Primitive parsers
 
@@ -192,8 +197,8 @@ export one-of = (as) -> (state) ->
   .or-else ->
     fail "Expected one of #{repr as}, but reached the end of the input.", state
   .chain (a) -> 
-    | as.index-of a != -1 => Either.Right [state.skip 1; a]
-    | otherwise           => Either.Left [state, (new ExpectedException null, a, state) <<< { expected: as }]
+    | (as.index-of a) isnt -1 => Either.Right [state.skip 1; a]
+    | otherwise               => Either.Left [state, (new ExpectedException null, a, state) <<< { expected: as }]
 
 
 export none-of = (as) -> (state) ->
@@ -201,8 +206,8 @@ export none-of = (as) -> (state) ->
   .or-else ->
     fail "Expected none of #{repr as}, but reached the end of the input.", state
   .chain (a) ->
-    | as.index-of a == -1 => Either.Right [state.skip 1; a]
-    | otherwise           => Either.Left [state, (new ExpectedException null, a, state) <<< { expected: as }]
+    | (as.index-of a) is -1 => Either.Right [state.skip 1; a]
+    | otherwise             => Either.Left [state, (new ExpectedException null, a, state) <<< { expected: as }]
 
 
 export any-char = (state) ->
@@ -289,5 +294,11 @@ export and-then = (p1, p2) --> (s1) ->
   [s3, a] <- p2 s2 .chain
   return Either.Right [s3, a]
 
-export separated-by  = (what, p) --> many (and-then what, p)
-export separated-by1 = (what, p) --> many1 (and-then what, p)
+export separated-by  = (what, p) --> (s1) ->
+  [s2, [a, as]] <- sequence([p, many (and-then what, p)])(s1).chain
+  return Either.Right [s2, [a, ...as]]
+
+export separated-by1 = (what, p) --> (s1) ->
+  [s2, [a, as]] <- sequence([p, many1 (and-then what, p)])(s1).chain
+  return Either.Right [s2, [a, ...as]]
+
