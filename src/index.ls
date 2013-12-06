@@ -171,8 +171,13 @@ export unexpect = (what, state) -->
 export result-or-error = (e, v) -->
   v.or-else ([state, _]) -> fail e, state
 
-export map-failure = (f, p) --> (s) ->
+export map-expected = (f, p) --> (s) ->
   p s .or-else ([state, e]) -> Either.Left [state, e.map f]
+
+export map = (f, p) --> (s) ->
+  p s .chain ([s1, a]) -> Either.Right [s1, f a]
+
+export map-right = (p, f) --> map f, p
 
 # Primitive parsers
 
