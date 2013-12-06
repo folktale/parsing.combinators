@@ -115,7 +115,7 @@ export class ParserException
 
   get-reason: -> @reason
     
-  map: (f) -> ^^this <<< { reason: f @reason, origin: this }
+  map: (f) -> this
 
   show-origin: ->
     | @origin => "Arising from #{@origin.to-string!}"
