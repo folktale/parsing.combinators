@@ -49,7 +49,7 @@ export class State
     | size > @length => Maybe.Nothing!
     | otherwise      => Maybe.Just (@slice 0, size)
 
-  skip: (size) -> new State(@input, @index + size)
+  skip: (size) -> new State @input, @index + size, @additional
 
   position: -> new Position @input, @index
 
@@ -98,11 +98,12 @@ export class Position
     
 
 export class ParserException
-  (reason, state) ->
-    @reason = reason
-    @state  = state
-    @stack  = ''
-    @origin = null
+  (reason, state, matched) ->
+    @reason  = reason
+    @state   = state
+    @matched = matched
+    @stack   = ''
+    @origin  = null
 
   make-stack: ->
     ^^this <<< { stack: (new Error).stack.split /\r?\n/ .slice 1 .join '\n' }
@@ -125,7 +126,7 @@ export class ParserException
 
 export class ExpectedException extends ParserException
   (expected, found, state) ->
-    super '', state
+    super '', state, found
     @expected = [expected]
     @found    = found
     
@@ -141,7 +142,7 @@ export class ExpectedException extends ParserException
 
   map: (f) -> ^^this <<< { expected: [new Literal (f @expected)], origin: this }
 
-class Literal
+export class Literal
   (a) -> @value = a
   to-string: -> "(#{@value})"
 
@@ -162,14 +163,14 @@ export expect = (state, a, b) -->
   | a is b => Either.Right [state.skip b.length; b]
   | _      => Either.Left [state; new ExpectedException a, b, state]
   
-export fail = (reason, state) -->
-  Either.Left [state; new ParserException reason, state]
+export fail = (reason, state, matched) -->
+  Either.Left [state; new ParserException reason, state, matched]
 
 export unexpect = (what, state) -->
-  fail "Unexpected #{repr what}.", state
+  fail "Unexpected #{repr what}.", state, what
  
 export result-or-error = (e, v) -->
-  v.or-else ([state, _]) -> fail e, state
+  v.or-else ([state, a]) -> fail e, state, a.matched
 
 export map-expected = (f, p) --> (s) ->
   p s .or-else ([state, e]) -> Either.Left [state, e.map f]
@@ -184,7 +185,7 @@ export map-right = (p, f) --> map f, p
 export satisfy = (description, f) --> (state) ->
   state.consume 1
   .or-else ->
-    fail "Expected #{description}, but reached the end of the input.", state
+    fail "Expected #{description}, but reached the end of the input.", state, ''
   .chain (a) ->
     | f a => Either.Right [state.skip 1; a]
     | _   => Either.Left [state, new ExpectedException (new Literal description), a, state]
@@ -193,14 +194,21 @@ export satisfy = (description, f) --> (state) ->
 export string = (a) -> (state) ->
   state.consume a.length
   .or-else -> 
-    fail "Expected #{repr a}, but reached the end of the input.", state
+    fail "Expected #{repr a}, but reached the end of the input.", state, ''
   .chain (expect state, a)
+
+
+export caseless-string = (a) -> (state) ->
+  state.consume a.length
+  .or-else ->
+    fail "Expected #{repr a}, but reached the end of the input.", state, ''
+  .chain -> expect state, a.to-lower-case!, it.to-lower-case!
 
 
 export one-of = (as) -> (state) ->
   state.consume 1
   .or-else ->
-    fail "Expected one of #{repr as}, but reached the end of the input.", state
+    fail "Expected one of #{repr as}, but reached the end of the input.", state, ''
   .chain (a) -> 
     | (as.index-of a) isnt -1 => Either.Right [state.skip 1; a]
     | otherwise               => Either.Left [state, (new ExpectedException null, a, state) <<< { expected: as }]
@@ -209,7 +217,7 @@ export one-of = (as) -> (state) ->
 export none-of = (as) -> (state) ->
   state.consume 1
   .or-else ->
-    fail "Expected none of #{repr as}, but reached the end of the input.", state
+    fail "Expected none of #{repr as}, but reached the end of the input.", state, ''
   .chain (a) ->
     | (as.index-of a) is -1 => Either.Right [state.skip 1; a]
     | otherwise             => Either.Left [state, (new ExpectedException null, a, state) <<< { expected: as }]
@@ -218,7 +226,7 @@ export none-of = (as) -> (state) ->
 export any-char = (state) ->
   state.consume 1
   .or-else ->
-    fail "Expected any character, but reached the end of the input.", state
+    fail "Expected any character, but reached the end of the input.", state, ''
   .chain (a) -> Either.Right [state.skip 1; a]
 
 
@@ -248,6 +256,23 @@ export choice = (ps) -> (state) ->
 export optional = (default_, p1) --> (state) ->
   p1 state .or-else -> Either.Right [state, default_]
 
+
+export lookahead = (p) -> (s1) ->
+  [s2, a] <- p s1 .chain
+  return Either.Right [s1, a]
+
+export lookahead-matching = (what, p) -> (s1) ->
+  [s2, a] <- p s1 .chain
+
+  switch
+  | a is what => Either.Right [s1, a]
+  | otherwise => unexpect a, s1
+
+export negate = (p) -> (s1) ->
+  p s1
+  .fold do
+        * ([s2, e]) -> Either.Right [s2, e.matched]
+        * ([s2, a]) -> unexpect a, s2
 
 export between = (open, close, p) --> (state) ->
   [s1, _] <- open state .chain
@@ -299,6 +324,11 @@ export and-then = (p1, p2) --> (s1) ->
   [s3, a] <- (backtrack s1) p2 s2 .chain
   return Either.Right [s3, a]
 
+export and-then1 = (p1, p2) --> (s1) ->
+  [s2, a] <- p1 s1 .chain
+  [s3, _] <- (backtrack s1) p2 s2 .chain
+  return Either.Right [s3, a]
+
 export separated-by  = (what, p) --> (s1) ->
   [s2, [a, as]] <- sequence([p, many (and-then what, p)])(s1).chain
   return Either.Right [s2, [a, ...as]]
@@ -307,3 +337,5 @@ export separated-by1 = (what, p) --> (s1) ->
   [s2, [a, as]] <- sequence([p, many1 (and-then what, p)])(s1).chain
   return Either.Right [s2, [a, ...as]]
 
+export followed-by = (what, p) --> and-then1 p, (lookahead what)
+export not-followed-by = (what, p) --> and-then1 p, (negate (lookahead what))
