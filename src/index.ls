@@ -191,6 +191,13 @@ export satisfy = (description, f) --> (state) ->
     | _   => Either.Left [state, new ExpectedException (new Literal description), a, state]
 
 
+export eof = (state) ->
+  | state.length is 0 => Either.Right [state, null]
+  | _                 => do
+                         ex = new ExpectedException null, (state.consume 1).get!, s
+                         Either.Left [state, ex.map -> 'end of file']
+                                                                     
+
 export string = (a) -> (state) ->
   state.consume a.length
   .or-else -> 
@@ -239,7 +246,6 @@ export lower     = satisfy 'lower-case letter'      -> /[a-z]/.test it
 export upper     = satisfy 'upper-case letter'      -> /[A-Z]/.test it
 export alpha-num = satisfy 'alphanumeric character' -> /[\w\d]/.test it
 export new-line  = satisfy 'newline'                -> /\r|\n/.test it
-  
 
 
 # Combinators
